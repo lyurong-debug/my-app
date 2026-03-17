@@ -3,409 +3,259 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-    <title>懒人记账 - 便携版</title>
+    <title>懒人记账 PWA</title>
     
-    <!-- PWA Meta Tags -->
+    <!-- PWA 基础配置 -->
     <meta name="apple-mobile-web-app-capable" content="yes">
-    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-status-bar-style" content="default">
     <meta name="apple-mobile-web-app-title" content="懒人记账">
-    <link rel="apple-touch-icon" href="https://api.dicebear.com/7.x/icons/svg?seed=wallet&backgroundColor=F27D26">
-    <link rel="manifest" href="manifest.json">
+    <link rel="apple-touch-icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='25' fill='%23F27D26'/><path d='M30 40h40v30H30z' fill='white'/></svg>">
     
-    <!-- Tailwind CSS -->
-    <script src="https://cdn.tailwindcss.com"></script>
-    
-    <!-- Google Fonts -->
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-    
+    <!-- Manifest Data URI (使单文件支持 PWA 安装) -->
+    <link rel="manifest" href="data:application/manifest+json,{'name':'懒人记账','short_name':'懒人记账','display':'standalone','start_url':'.','background_color':'%23F7F7F5','theme_color':'%23F27D26','icons':[{'src':'data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><rect width=%22100%22 height=%22100%22 rx=%2225%22 fill=%22%23F27D26%22/><path d=%22M30 40h40v30H30z%22 fill=%22white%22/></svg>','sizes':'192x192','type':'image/svg+xml'}]}">
+
+    <!-- 使用国内高速 CDN 加载基础库 -->
+    <script src="https://cdn.staticfile.org/react/18.2.0/umd/react.production.min.js"></script>
+    <script src="https://cdn.staticfile.org/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+    <script src="https://cdn.staticfile.org/lucide/0.263.0/lucide.min.js"></script>
+    <script src="https://cdn.staticfile.org/tailwind-css/2.2.19/tailwind.min.js"></script>
+
     <style>
+        :root {
+            --notion-bg: #F7F7F5;
+            --notion-text: #37352F;
+        }
         body {
-            font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-            -webkit-tap-highlight-color: transparent;
-            background-color: #F7F7F5;
+            /* 使用系统原生字体，避免加载外部 Google Fonts */
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+            background-color: var(--notion-bg);
+            color: var(--notion-text);
+            margin: 0;
+            padding: 0;
+            -webkit-font-smoothing: antialiased;
+            overflow: hidden;
         }
         .safe-top { padding-top: env(safe-area-inset-top); }
         .safe-bottom { padding-bottom: env(safe-area-inset-bottom); }
         ::-webkit-scrollbar { display: none; }
         
-        /* Custom Animations */
-        @keyframes slideUp {
-            from { transform: translateY(100%); }
-            to { transform: translateY(0); }
-        }
-        .animate-slide-up { animation: slideUp 0.3s ease-out; }
+        .chat-container { height: calc(100vh - 140px); }
+        .stats-card { background: white; border: 1px solid rgba(55, 53, 47, 0.08); }
+        .tab-active { color: #37352F; transform: scale(1.1); }
+        .tab-inactive { color: rgba(55, 53, 47, 0.3); }
     </style>
 </head>
 <body>
     <div id="root"></div>
 
-    <!-- Dependencies -->
-    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
-    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
-    <script src="https://unpkg.com/lucide@latest"></script>
-    <script src="https://unpkg.com/framer-motion@10.16.4/dist/framer-motion.js"></script>
-    <script src="https://unpkg.com/recharts/umd/Recharts.js"></script>
-    <script src="https://unpkg.com/clsx@2.0.0/dist/clsx.min.js"></script>
-    <script src="https://unpkg.com/tailwind-merge@1.14.0/dist/bundle-client.umd.js"></script>
-
-    <script type="text/javascript">
-        const { useState, useEffect, useMemo, useRef } = React;
-        const { motion, AnimatePresence } = FramerMotion;
-        const { 
-            PieChart, Pie, Cell, ResponsiveContainer, Tooltip,
-            BarChart, Bar, XAxis, YAxis, CartesianGrid
-        } = Recharts;
-
-        // Utility for Tailwind classes
-        function cn(...inputs) {
-            return TailwindMerge.twMerge(clsx.clsx(inputs));
+    <script>
+        // --- Service Worker 离线逻辑 ---
+        const swCode = `
+            const CACHE_NAME = 'lazy-book-v1';
+            self.addEventListener('install', (e) => {
+                e.waitUntil(caches.open(CACHE_NAME).then(cache => cache.addAll(['./'])));
+            });
+            self.addEventListener('fetch', (e) => {
+                e.respondWith(caches.match(e.request).then(res => res || fetch(e.request)));
+            });
+        `;
+        const blob = new Blob([swCode], { type: 'application/javascript' });
+        const swUrl = URL.createObjectURL(blob);
+        if ('serviceWorker' in navigator) {
+            navigator.serviceWorker.register(swUrl).catch(() => {});
         }
 
-        // Icon Component
-        const Icon = ({ name, size = 24, className = "" }) => {
-            const iconRef = useRef(null);
-            useEffect(() => {
-                if (iconRef.current) {
-                    const icon = lucide.icons[name];
-                    if (icon) {
-                        const svg = lucide.createIcons({
-                            icons: { [name]: icon },
-                            attrs: { strokeWidth: 2, size, class: className }
-                        });
-                    }
-                }
-            }, [name, size, className]);
-            return React.createElement('i', { 'data-lucide': name, ref: iconRef, className });
-        };
+        // --- React 应用代码 ---
+        const { useState, useEffect, useMemo, useRef } = React;
+        const e = React.createElement;
 
         const CATEGORIES = ["餐饮", "交通", "购物", "娱乐", "居家", "医疗", "教育", "人情", "其他"];
-        const COLORS = ['#F27D26', '#37352F', '#07C160', '#2D9CDB', '#9B51E0', '#F2994A', '#EB5757', '#27AE60', '#BDBDBD'];
+        const COLORS = ['#F27D26', '#37352F', '#07C160', '#2D9CDB', '#9B51E0', '#F2994A', '#EB5757'];
 
-        const App = () => {
-            // State with LocalStorage persistence
-            const [messages, setMessages] = useState(() => {
-                const saved = localStorage.getItem('lazy_messages');
-                return saved ? JSON.parse(saved) : [{
-                    id: '1',
-                    text: "你好！我是你的 AI 记账助手。你可以直接对我说“中午吃面花了15元”，我会帮你自动记账。",
-                    sender: 'ai',
-                    timestamp: new Date().toISOString()
-                }];
-            });
-
-            const [transactions, setTransactions] = useState(() => {
-                const saved = localStorage.getItem('lazy_tx');
-                return saved ? JSON.parse(saved) : [];
-            });
-
-            const [userProfile, setUserProfile] = useState(() => {
-                const saved = localStorage.getItem('lazy_profile');
-                return saved ? JSON.parse(saved) : { name: "记账达人", avatar: "" };
-            });
-            const [apiKey, setApiKey] = useState(() => localStorage.getItem('lazy_gemini_key') || "");
-            
+        function App() {
             const [activeTab, setActiveTab] = useState('chat');
+            const [transactions, setTransactions] = useState(() => JSON.parse(localStorage.getItem('lazy_tx') || '[]'));
+            const [messages, setMessages] = useState(() => JSON.parse(localStorage.getItem('lazy_msgs') || '[{"id":1,"text":"你好！我是你的 AI 记账助手。你可以直接对我说“中午吃面花了15元”。","sender":"ai"}]'));
+            const [apiConfig, setApiConfig] = useState(() => JSON.parse(localStorage.getItem('lazy_api') || '{"provider":"deepseek","key":""}'));
             const [inputText, setInputText] = useState('');
             const [isGenerating, setIsGenerating] = useState(false);
             const [showSettings, setShowSettings] = useState(false);
-            const [statsPeriod, setStatsPeriod] = useState('month');
+            
+            const scrollRef = useRef(null);
 
-            const messagesEndRef = useRef(null);
-
-            // Sync to LocalStorage
-            useEffect(() => localStorage.setItem('lazy_messages', JSON.stringify(messages)), [messages]);
+            // 数据持久化
             useEffect(() => localStorage.setItem('lazy_tx', JSON.stringify(transactions)), [transactions]);
-            useEffect(() => localStorage.setItem('lazy_profile', JSON.stringify(userProfile)), [userProfile]);
-            useEffect(() => localStorage.setItem('lazy_gemini_key', apiKey), [apiKey]);
+            useEffect(() => localStorage.setItem('lazy_msgs', JSON.stringify(messages)), [messages]);
+            useEffect(() => localStorage.setItem('lazy_api', JSON.stringify(apiConfig)), [apiConfig]);
 
             useEffect(() => {
-                messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+                if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
             }, [messages]);
 
-            const handleSendMessage = async () => {
-                if (!inputText.trim()) return;
-
-                const userMsg = {
-                    id: Date.now().toString(),
-                    text: inputText,
-                    sender: 'user',
-                    timestamp: new Date().toISOString()
-                };
-
+            const handleSend = async () => {
+                if (!inputText.trim() || isGenerating) return;
+                const userMsg = { id: Date.now(), text: inputText, sender: 'user' };
                 setMessages(prev => [...prev, userMsg]);
                 setInputText('');
 
-                if (!apiKey) {
-                    setTimeout(() => {
-                        setMessages(prev => [...prev, {
-                            id: (Date.now() + 1).toString(),
-                            text: "⚠️ 离线版需要配置 Gemini API Key 才能使用 AI 自动记账。请在右上角设置中输入您的 Key。",
-                            sender: 'ai',
-                            timestamp: new Date().toISOString()
-                        }]);
-                    }, 600);
+                if (!apiConfig.key) {
+                    setMessages(prev => [...prev, { id: Date.now()+1, text: "⚠️ 请先在设置中配置 API Key", sender: 'ai' }]);
                     return;
                 }
 
                 setIsGenerating(true);
                 try {
-                    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`, {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({
-                            contents: [{
-                                parts: [{
-                                    text: `你是一个极简记账助手。解析用户的输入并提取交易信息。
-                                    返回格式必须是 JSON: {"amount": 数字, "category": "餐饮/交通/购物/娱乐/居家/医疗/教育/人情/其他", "description": "简短描述", "reply": "已记账(类别)金额元"}
-                                    用户输入: "${inputText}"`
-                                }]
-                            }]
-                        })
-                    });
+                    const prompt = `你是一个记账助手。解析: "${inputText}"。返回纯JSON: {"amount":数字,"category":"餐饮/交通/购物/娱乐/居家/医疗/教育/人情/其他","description":"备注","reply":"已记入..."}`;
                     
-                    const data = await response.json();
-                    const aiRaw = data.candidates[0].content.parts[0].text;
-                    const jsonMatch = aiRaw.match(/\{.*\}/s);
-                    
-                    if (jsonMatch) {
-                        const result = JSON.parse(jsonMatch[0]);
-                        const newTx = {
-                            id: Date.now().toString(),
-                            amount: result.amount,
-                            category: result.category,
-                            description: result.description,
-                            date: new Date().toISOString(),
-                            type: 'expense'
-                        };
-                        setTransactions(prev => [newTx, ...prev]);
-                        setMessages(prev => [...prev, {
-                            id: (Date.now() + 1).toString(),
-                            text: result.reply,
-                            sender: 'ai',
-                            timestamp: new Date().toISOString()
-                        }]);
+                    let aiText = "";
+                    if (apiConfig.provider === 'gemini') {
+                        const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiConfig.key}`, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] })
+                        });
+                        const data = await res.json();
+                        aiText = data.candidates[0].content.parts[0].text;
                     } else {
-                        throw new Error("Parse Error");
+                        const res = await fetch('https://api.deepseek.com/chat/completions', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiConfig.key}` },
+                            body: JSON.stringify({
+                                model: "deepseek-chat",
+                                messages: [{ role: "user", content: prompt }],
+                                response_format: { type: "json_object" }
+                            })
+                        });
+                        const data = await res.json();
+                        aiText = data.choices[0].message.content;
                     }
-                } catch (e) {
-                    setMessages(prev => [...prev, {
-                        id: (Date.now() + 1).toString(),
-                        text: "❌ AI 解析失败。请检查网络或 API Key 是否正确。",
-                        sender: 'ai',
-                        timestamp: new Date().toISOString()
-                    }]);
+
+                    const result = JSON.parse(aiText.match(/\{.*\}/s)[0]);
+                    setTransactions(prev => [{
+                        id: Date.now(),
+                        amount: result.amount,
+                        category: result.category,
+                        description: result.description,
+                        date: new Date().toISOString()
+                    }, ...prev]);
+                    setMessages(prev => [...prev, { id: Date.now()+2, text: result.reply, sender: 'ai' }]);
+                } catch (err) {
+                    setMessages(prev => [...prev, { id: Date.now()+2, text: "❌ 解析失败，请检查 API Key 或网络", sender: 'ai' }]);
                 } finally {
                     setIsGenerating(false);
                 }
             };
 
-            const totalExpense = useMemo(() => {
-                return transactions.reduce((acc, t) => acc + t.amount, 0);
-            }, [transactions]);
+            const total = useMemo(() => transactions.reduce((s, t) => s + t.amount, 0), [transactions]);
 
-            const categoryData = useMemo(() => {
-                const map = {};
-                transactions.forEach(t => {
-                    map[t.category] = (map[t.category] || 0) + t.amount;
-                });
-                return Object.entries(map).map(([name, value]) => ({ name, value }));
-            }, [transactions]);
+            return e('div', { className: 'flex flex-col h-screen max-w-md mx-auto relative border-x border-gray-100 shadow-2xl bg-[#F7F7F5]' },
+                // Header
+                e('header', { className: 'bg-white/80 backdrop-blur-md p-4 flex justify-between items-center safe-top border-b border-gray-100' },
+                    e('div', { className: 'flex items-center gap-2' },
+                        e('div', { className: 'w-8 h-8 bg-[#37352F] rounded-lg flex items-center justify-center text-white font-bold' }, '懒'),
+                        e('span', { className: 'font-bold text-sm' }, '懒人记账')
+                    ),
+                    e('button', { onClick: () => setShowSettings(true), className: 'p-2 text-gray-400' }, 
+                        e('i', { 'data-lucide': 'settings', className: 'w-5 h-5' })
+                    )
+                ),
 
-            return (
-                <div className="flex flex-col h-screen max-w-md mx-auto bg-[#F7F7F5] overflow-hidden shadow-2xl relative border-x border-[#37352F]/10">
-                    {/* Header */}
-                    <header className="bg-white/80 backdrop-blur-md border-b border-[#37352F]/5 p-4 flex items-center justify-between sticky top-0 z-20 safe-top">
-                        <div className="flex items-center gap-3">
-                            <div className="w-8 h-8 bg-[#37352F] rounded-lg flex items-center justify-center text-white font-bold text-sm">
-                                {userProfile.name[0]}
-                            </div>
-                            <h1 className="text-sm font-bold text-[#37352F] tracking-tight">懒人记账</h1>
-                        </div>
-                        <button onClick={() => setShowSettings(true)} className="p-2 hover:bg-[#37352F]/5 rounded-full transition-colors">
-                            <Icon name="Settings" size={20} className="text-[#37352F]/40" />
-                        </button>
-                    </header>
+                // Content
+                e('main', { className: 'flex-1 overflow-y-auto pb-24', ref: scrollRef },
+                    activeTab === 'chat' ? (
+                        e('div', { className: 'p-4 space-y-4' },
+                            messages.map(m => e('div', { key: m.id, className: `flex ${m.sender === 'user' ? 'justify-end' : 'justify-start'}` },
+                                e('div', { className: `max-w-[85%] p-3 rounded-2xl text-sm ${m.sender === 'user' ? 'bg-[#37352F] text-white' : 'bg-white shadow-sm border border-gray-100'}` }, m.text)
+                            ))
+                        )
+                    ) : (
+                        e('div', { className: 'p-6 space-y-6' },
+                            e('div', { className: 'stats-card p-6 rounded-3xl' },
+                                e('p', { className: 'text-[10px] font-bold text-gray-400 uppercase tracking-widest' }, '累计支出'),
+                                e('h2', { className: 'text-3xl font-bold mt-1' }, `¥${total.toFixed(2)}`),
+                                e('div', { className: 'mt-6 h-2 bg-gray-100 rounded-full overflow-hidden flex' },
+                                    CATEGORIES.map((c, i) => {
+                                        const val = transactions.filter(t => t.category === c).reduce((s, t) => s + t.amount, 0);
+                                        if (val === 0) return null;
+                                        return e('div', { key: c, style: { width: `${(val/total)*100}%`, backgroundColor: COLORS[i % COLORS.length] } });
+                                    })
+                                )
+                            ),
+                            e('div', { className: 'space-y-3' },
+                                e('h3', { className: 'text-[10px] font-bold text-gray-400 uppercase tracking-widest' }, '最近记录'),
+                                transactions.map(t => e('div', { key: t.id, className: 'bg-white p-4 rounded-2xl flex justify-between items-center shadow-sm border border-gray-50' },
+                                    e('div', { className: 'flex items-center gap-3' },
+                                        e('div', { className: 'w-10 h-10 bg-gray-50 rounded-xl flex items-center justify-center text-lg' }, t.category[0]),
+                                        e('div', null, e('p', { className: 'text-sm font-bold' }, t.category), e('p', { className: 'text-[10px] text-gray-400' }, t.description || '无备注'))
+                                    ),
+                                    e('p', { className: 'font-bold' }, `-¥${t.amount.toFixed(2)}`)
+                                ))
+                            )
+                        )
+                    )
+                ),
 
-                    {/* Main Content */}
-                    <main className="flex-1 overflow-y-auto pb-24">
-                        {activeTab === 'chat' && (
-                            <div className="p-4 space-y-6">
-                                {messages.map((msg) => (
-                                    <motion.div 
-                                        key={msg.id}
-                                        initial={{ opacity: 0, y: 10 }}
-                                        animate={{ opacity: 1, y: 0 }}
-                                        className={cn("flex flex-col", msg.sender === 'user' ? "items-end" : "items-start")}
-                                    >
-                                        <div className={cn(
-                                            "max-w-[85%] p-3.5 rounded-2xl text-sm shadow-sm",
-                                            msg.sender === 'user' 
-                                                ? "bg-[#37352F] text-white rounded-tr-none" 
-                                                : "bg-white text-[#37352F] border border-[#37352F]/5 rounded-tl-none"
-                                        )}>
-                                            {msg.text}
-                                        </div>
-                                        <span className="text-[10px] text-[#37352F]/20 mt-1 px-1">
-                                            {new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                                        </span>
-                                    </motion.div>
-                                ))}
-                                <div ref={messagesEndRef} />
-                            </div>
-                        )}
+                // Footer
+                e('footer', { className: 'fixed bottom-0 left-0 right-0 max-w-md mx-auto bg-white/90 backdrop-blur-xl border-t border-gray-100 safe-bottom' },
+                    activeTab === 'chat' && e('div', { className: 'p-4 flex gap-2' },
+                        e('input', { 
+                            className: 'flex-1 bg-gray-50 border border-gray-100 rounded-2xl px-4 py-3 text-sm outline-none',
+                            placeholder: isGenerating ? 'AI 正在解析...' : '输入记账内容...',
+                            value: inputText,
+                            onChange: (e) => setInputText(e.target.value),
+                            onKeyPress: (e) => e.key === 'Enter' && handleSend(),
+                            disabled: isGenerating
+                        }),
+                        e('button', { onClick: handleSend, className: 'w-12 h-12 bg-[#37352F] text-white rounded-2xl flex items-center justify-center' }, 
+                            e('i', { 'data-lucide': 'send', className: 'w-5 h-5' })
+                        )
+                    ),
+                    e('div', { className: 'flex justify-around py-2' },
+                        e('button', { onClick: () => setActiveTab('chat'), className: `flex flex-col items-center gap-1 ${activeTab === 'chat' ? 'tab-active' : 'tab-inactive'}` }, e('i', { 'data-lucide': 'message-square', className: 'w-5 h-5' }), e('span', { className: 'text-[10px] font-bold' }, '记账')),
+                        e('button', { onClick: () => setActiveTab('stats'), className: `flex flex-col items-center gap-1 ${activeTab === 'stats' ? 'tab-active' : 'tab-inactive'}` }, e('i', { 'data-lucide': 'bar-chart-3', className: 'w-5 h-5' }), e('span', { className: 'text-[10px] font-bold' }, '账单'))
+                    )
+                ),
 
-                        {activeTab === 'stats' && (
-                            <div className="p-6 space-y-8">
-                                <div className="bg-white rounded-3xl p-6 shadow-sm border border-[#37352F]/5">
-                                    <div className="flex justify-between items-end mb-6">
-                                        <div>
-                                            <p className="text-[10px] font-bold text-[#37352F]/40 uppercase tracking-widest">累计支出</p>
-                                            <h2 className="text-3xl font-bold text-[#37352F] mt-1">¥{totalExpense.toFixed(2)}</h2>
-                                        </div>
-                                        <div className="bg-[#07C160]/10 text-[#07C160] text-[10px] font-bold px-2 py-1 rounded-md">
-                                            本月
-                                        </div>
-                                    </div>
-                                    
-                                    {categoryData.length > 0 ? (
-                                        <div className="h-64">
-                                            <ResponsiveContainer width="100%" height="100%">
-                                                <PieChart>
-                                                    <Pie
-                                                        data={categoryData}
-                                                        cx="50%"
-                                                        cy="50%"
-                                                        innerRadius={60}
-                                                        outerRadius={80}
-                                                        paddingAngle={5}
-                                                        dataKey="value"
-                                                    >
-                                                        {categoryData.map((entry, index) => (
-                                                            <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
-                                                        ))}
-                                                    </Pie>
-                                                    <Tooltip />
-                                                </PieChart>
-                                            </ResponsiveContainer>
-                                        </div>
-                                    ) : (
-                                        <div className="h-64 flex flex-col items-center justify-center text-[#37352F]/20">
-                                            <Icon name="BarChart3" size={48} className="mb-2 opacity-20" />
-                                            <p className="text-xs">暂无数据</p>
-                                        </div>
-                                    )}
-                                </div>
-
-                                <div className="space-y-4">
-                                    <h3 className="text-[10px] font-bold text-[#37352F]/40 uppercase tracking-widest px-1">最近记录</h3>
-                                    {transactions.slice(0, 10).map(tx => (
-                                        <div key={tx.id} className="bg-white p-4 rounded-2xl flex items-center justify-between border border-[#37352F]/5 shadow-sm">
-                                            <div className="flex items-center gap-3">
-                                                <div className="w-10 h-10 bg-[#F7F7F5] rounded-xl flex items-center justify-center text-lg">
-                                                    {tx.category[0]}
-                                                </div>
-                                                <div>
-                                                    <p className="text-sm font-bold text-[#37352F]">{tx.category}</p>
-                                                    <p className="text-[10px] text-[#37352F]/40">{tx.description || '无备注'}</p>
-                                                </div>
-                                            </div>
-                                            <p className="text-sm font-bold text-[#37352F]">-¥{tx.amount.toFixed(2)}</p>
-                                        </div>
-                                    ))}
-                                </div>
-                            </div>
-                        )}
-                    </main>
-
-                    {/* Bottom Navigation */}
-                    <div className="fixed bottom-0 left-0 right-0 max-w-md mx-auto bg-white/80 backdrop-blur-xl border-t border-[#37352F]/5 safe-bottom z-30">
-                        {activeTab === 'chat' && (
-                            <div className="p-4 flex gap-2 items-center">
-                                <div className="flex-1 relative">
-                                    <input 
-                                        type="text" 
-                                        value={inputText}
-                                        onChange={e => setInputText(e.target.value)}
-                                        onKeyPress={e => e.key === 'Enter' && handleSendMessage()}
-                                        placeholder={isGenerating ? "AI 正在思考..." : "输入记账内容..."}
-                                        disabled={isGenerating}
-                                        className="w-full bg-white border border-[#37352F]/10 rounded-2xl py-3.5 px-5 text-sm outline-none focus:ring-2 focus:ring-[#37352F]/5 transition-all disabled:opacity-50"
-                                    />
-                                </div>
-                                <button 
-                                    onClick={handleSendMessage} 
-                                    disabled={!inputText.trim() || isGenerating}
-                                    className="w-12 h-12 bg-[#37352F] text-white rounded-2xl flex items-center justify-center shadow-lg active:scale-90 transition-all disabled:opacity-50"
-                                >
-                                    <Icon name="Send" size={20} />
-                                </button>
-                            </div>
-                        )}
-                        <div className="flex justify-around items-center px-4">
-                            <button onClick={() => setActiveTab('chat')} className={cn("flex flex-col items-center gap-1 transition-all", activeTab === 'chat' ? "text-[#37352F] scale-110" : "text-[#37352F]/30")}>
-                                <Icon name="MessageSquare" size={22} />
-                                <span className="text-[10px] font-bold">记账</span>
-                            </button>
-                            <button onClick={() => setActiveTab('stats')} className={cn("flex flex-col items-center gap-1 transition-all", activeTab === 'stats' ? "text-[#37352F] scale-110" : "text-[#37352F]/30")}>
-                                <Icon name="BarChart3" size={22} />
-                                <span className="text-[10px] font-bold">账单</span>
-                            </button>
-                        </div>
-                    </div>
-
-                    {/* Settings Modal */}
-                    <AnimatePresence>
-                        {showSettings && (
-                            <div className="fixed inset-0 bg-black/40 backdrop-blur-sm z-50 flex items-center justify-center p-6">
-                                <motion.div 
-                                    initial={{ scale: 0.9, opacity: 0 }}
-                                    animate={{ scale: 1, opacity: 1 }}
-                                    exit={{ scale: 0.9, opacity: 0 }}
-                                    className="bg-white w-full rounded-3xl p-8 shadow-2xl border border-[#37352F]/10"
-                                >
-                                    <h3 className="text-xl font-bold mb-6 text-[#37352F]">便携版设置</h3>
-                                    <div className="space-y-5">
-                                        <div>
-                                            <label className="text-[10px] font-bold text-[#37352F]/40 uppercase tracking-widest block mb-2 px-1">Gemini API Key</label>
-                                            <input 
-                                                type="password" 
-                                                value={apiKey}
-                                                onChange={e => setApiKey(e.target.value)}
-                                                placeholder="输入您的 Google AI API Key"
-                                                className="w-full bg-[#F7F7F5] border border-[#37352F]/10 rounded-xl p-4 text-sm outline-none focus:ring-2 focus:ring-[#37352F]/5"
-                                            />
-                                            <p className="text-[9px] text-[#37352F]/40 mt-2 px-1 leading-relaxed">
-                                                由于是单文件 HTML，AI 功能需要您提供自己的 API Key。数据仅保存在您的手机本地。
-                                            </p>
-                                        </div>
-                                        <div>
-                                            <label className="text-[10px] font-bold text-[#37352F]/40 uppercase tracking-widest block mb-2 px-1">昵称</label>
-                                            <input 
-                                                type="text" 
-                                                value={userProfile.name}
-                                                onChange={e => setUserProfile(prev => ({...prev, name: e.target.value}))}
-                                                className="w-full bg-[#F7F7F5] border border-[#37352F]/10 rounded-xl p-4 text-sm outline-none"
-                                            />
-                                        </div>
-                                        <div className="flex gap-3 pt-4">
-                                            <button onClick={() => {
-                                                if(confirm('确定要清空所有本地数据吗？此操作不可撤销。')) {
-                                                    localStorage.clear();
-                                                    window.location.reload();
-                                                }
-                                            }} className="flex-1 py-4 bg-red-50 text-red-600 rounded-2xl font-bold text-xs hover:bg-red-100 transition-colors">清空数据</button>
-                                            <button onClick={() => setShowSettings(false)} className="flex-1 py-4 bg-[#37352F] text-white rounded-2xl font-bold text-xs shadow-lg active:scale-95 transition-all">完成</button>
-                                        </div>
-                                    </div>
-                                </motion.div>
-                            </div>
-                        )}
-                    </AnimatePresence>
-                </div>
+                // Settings Modal
+                showSettings && e('div', { className: 'fixed inset-0 bg-black/40 backdrop-blur-sm z-50 flex items-center justify-center p-6' },
+                    e('div', { className: 'bg-white w-full rounded-3xl p-8 shadow-2xl' },
+                        e('h3', { className: 'text-xl font-bold mb-6' }, '设置'),
+                        e('div', { className: 'space-y-4' },
+                            e('div', null,
+                                e('label', { className: 'text-[10px] font-bold text-gray-400 uppercase mb-2 block' }, 'AI 服务商'),
+                                e('div', { className: 'flex gap-2' },
+                                    ['gemini', 'deepseek'].map(p => e('button', { 
+                                        key: p,
+                                        onClick: () => setApiConfig(prev => ({...prev, provider: p})),
+                                        className: `flex-1 py-2 rounded-lg text-xs font-bold border ${apiConfig.provider === p ? 'bg-[#37352F] text-white' : 'text-gray-400'}`
+                                    }, p))
+                                )
+                            ),
+                            e('div', null,
+                                e('label', { className: 'text-[10px] font-bold text-gray-400 uppercase mb-2 block' }, 'API Key'),
+                                e('input', { 
+                                    type: 'password',
+                                    className: 'w-full bg-gray-50 border border-gray-100 rounded-xl p-3 text-sm',
+                                    value: apiConfig.key,
+                                    onChange: (e) => setApiConfig(prev => ({...prev, key: e.target.value}))
+                                })
+                            ),
+                            e('div', { className: 'flex gap-3 pt-4' },
+                                e('button', { onClick: () => { localStorage.clear(); window.location.reload(); }, className: 'flex-1 py-3 bg-red-50 text-red-600 rounded-2xl text-xs font-bold' }, '清空数据'),
+                                e('button', { onClick: () => setShowSettings(false), className: 'flex-1 py-3 bg-[#37352F] text-white rounded-2xl text-xs font-bold' }, '完成')
+                            )
+                        )
+                    )
+                )
             );
-        };
+        }
 
-        ReactDOM.render(React.createElement(App), document.getElementById('root'));
+        // 初始化图标和渲染
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(e(App));
+        
+        // 动态加载图标
+        setInterval(() => lucide.createIcons(), 500);
     </script>
 </body>
 </html>
